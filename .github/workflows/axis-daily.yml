@@ -69,8 +69,6 @@ jobs:
         run: |
           npm install -g @github/copilot
           copilot mcp add --transport http --header "Authorization: Bearer $SIGRID_TOKEN" axis https://sigrid-says.com/mcp
-          copilot plugin marketplace add Software-Improvement-Group/agent-integrations
-          copilot plugin install axis@sigrid
       - name: Create fix branch
         run: |
           git config user.name "axis-autofix"
