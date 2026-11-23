@@ -1,6 +1,13 @@
 [![Snapshot](https://github.com/Netflix/zuul/actions/workflows/snapshot.yml/badge.svg)](https://github.com/Netflix/zuul/actions/workflows/snapshot.yml)
 
-# Zuul
+# Zuul (Sigrid Axis demo fork)
+
+> **Demo repository.** This fork of [Netflix/zuul](https://github.com/Netflix/zuul) exists only to demonstrate
+> [Sigrid Axis](https://www.softwareimprovementgroup.com/sigrid/) autofix, which runs on an automated daily loop
+> and fixes Sigrid findings in this codebase. It is not intended for production use and is not maintained as a
+> product. Dependabot is disabled so dependency findings are handled by Axis rather than automated update PRs.
+> For the real project, see upstream.
+
 
 <img src="https://i.imgur.com/mRSosEp.png" width=500/>
 
