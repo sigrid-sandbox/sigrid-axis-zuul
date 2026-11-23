@@ -1,0 +1,74 @@
+name: sigrid-drift-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  drift-review:
+    # Not for drafts: the review starts once the pull request is marked ready.
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write
+      copilot-requests: write
+    env:
+      SIGRID_TOKEN: ${{ secrets.SIGRID_CI_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ github.token }}
+      COMMENT_FILE: /tmp/drift-comment.md
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Check Sigrid system
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $SIGRID_TOKEN" -H "Accept: application/json" \
+            "https://sigrid-says.com/rest/analysis-results/api/v1/system-metadata/sigridsandbox/autofix-zuul")
+          [ "$code" = 200 ] || { echo "Sigrid system check failed (HTTP $code)" >&2; exit 1; }
+      - name: Check Sigrid MCP token
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST https://sigrid-says.com/mcp \
+            -H "Authorization: Bearer $SIGRID_TOKEN" \
+            -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci-check","version":"1"}}}')
+          [ "$code" = 200 ] || { echo "Sigrid MCP rejected the token (HTTP $code)" >&2; exit 1; }
+      - name: Install Copilot CLI and connect Axis
+        run: |
+          npm install -g @github/copilot
+          copilot mcp add --transport http --header "Authorization: Bearer $SIGRID_TOKEN" axis https://sigrid-says.com/mcp
+      - name: Review architecture drift
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          copilot -p "Review pull request $PR for architecture drift using the Sigrid architecture tools of the axis MCP server (architecture_get_internal, architecture_get_external_deps): check whether the diff adds dependencies between directories, bypasses facades or creates cycles. Sigrid customer and system are in .sigrid/profile.md. Scope the diff to exactly this pull request: use 'git diff $BASE HEAD', not local uncommitted changes. When the skill finishes, write one markdown comment to $COMMENT_FILE: if drift was found, its findings (what changed, why it is drift, which files to touch instead); otherwise a short note stating that no architecture drift was found. If the skill cannot complete, write a comment explaining what blocked it. Do not post the comment yourself. Never modify any other file, never open or merge pull requests, and never retry a failed tool call with different arguments." \
+            --allow-tool 'shell(git diff:*)' \
+            --allow-tool 'read' \
+            --allow-tool 'write' \
+            --allow-tool 'axis' \
+            --log-dir copilot-logs
+      # The comment is posted as the sigrid-architecture-drift app, not as github-actions.
+      - name: Create app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.DRIFT_APP_ID }}
+          private-key: ${{ secrets.DRIFT_APP_PRIVATE_KEY }}
+      - name: Post comment
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR" --body-file "$COMMENT_FILE"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: copilot-logs
+          path: copilot-logs
+          retention-days: 30
