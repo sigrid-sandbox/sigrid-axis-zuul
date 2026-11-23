@@ -48,11 +48,6 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.AXIS_PUSH_TOKEN }}
-      - uses: actions/setup-java@v6
-        with:
-          distribution: zulu
-          java-version: 21
-          cache: gradle
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -81,7 +76,7 @@ jobs:
         env:
           TASK: ${{ matrix.task }}
         run: |
-          copilot -p "$TASK The objectives file, if the task mentions one, is $OBJECTIVES. Follow AGENTS.md. Commit the fix locally on the current branch; do not push, do not open a pull request and do not change files under .github/. Build with ./gradlew build before committing. Make the commit message say which finding was fixed and what changed. Never retry a failed tool call with different arguments." \
+          copilot -p "$TASK The objectives file, if the task mentions one, is $OBJECTIVES. Follow AGENTS.md. Commit the fix locally on the current branch; do not push, do not open a pull request and do not change files under .github/. Make the commit message say which finding was fixed and what changed. Never retry a failed tool call with different arguments." \
             --add-dir "$RUNNER_TEMP" \
             --allow-tool 'write' \
             --allow-tool 'read' \
@@ -89,7 +84,6 @@ jobs:
             --allow-tool 'shell(git commit:*)' \
             --allow-tool 'shell(git diff:*)' \
             --allow-tool 'shell(git status:*)' \
-            --allow-tool 'shell(./gradlew:*)' \
             --allow-tool 'axis' \
             --log-dir copilot-logs
       - name: Push branch and open pull request

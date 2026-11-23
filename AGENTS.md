@@ -18,4 +18,4 @@ If it reports drift, fix it, or explain why the new dependency is intended.
 - Never change files under `.github/`.
 - Never push to `main`, never force-push, never merge.
 - Keep changes behaviour-preserving (move, extract, rename); leave public APIs and tests as they are.
-- Build and test with `./gradlew build` before opening a pull request.
+- Do not run the full build or test suite; the pull request checks do that.
