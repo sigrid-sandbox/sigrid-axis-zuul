@@ -1,0 +1,113 @@
+name: axis-daily
+
+# Each run diagnoses one area with the Copilot CLI, lets it commit the top fix on a branch, then
+# pushes the branch and opens a pull request. The push and the pull request use a PAT, because
+# events created with GITHUB_TOKEN do not start the PR Build, Sigrid or drift review workflows.
+on:
+  schedule:
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      copilot-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - area: maintainability
+            task: >-
+              Run the diagnose skill for maintainability on this repository (Sigrid customer and
+              system are in .sigrid/profile.md). Any part of the codebase may be picked. If it finds
+              nothing worth fixing, say so in the summary and stop without changing anything.
+              Otherwise run the autofix skill on its plan.
+          - area: architecture
+            task: >-
+              Run the diagnose skill for architecture on this repository (Sigrid customer and system
+              are in .sigrid/profile.md). If it finds nothing worth fixing, say so in the summary and
+              stop without changing anything. Otherwise run the autofix skill for architecture on
+              its plan, then run the change-feedback skill for architecture on the result and state
+              its verdict in the summary.
+          - area: osh-security
+            task: >-
+              First check the Sigrid objectives of this system with the Sigrid API:
+              curl -H "Authorization: Bearer $SIGRID_TOKEN"
+              "https://sigrid-says.com/rest/analysis-results/api/v1/objectives-evaluation/sigridsandbox?startDate=<today>&endDate=<today>"
+              and read the entry whose systemName is "autofix-zuul". Only the open source health and
+              security objectives count. If the call fails, stop with an error. If all of them are
+              met, say so in the summary and stop without changing anything. Otherwise run the
+              autofix skill for open-source and/or security, whichever has an unmet objective.
+    env:
+      SIGRID_TOKEN: ${{ secrets.SIGRID_CI_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
+      # Pushing and opening the pull request, as a user that is allowed to start workflows.
+      GH_TOKEN: ${{ secrets.AXIS_PUSH_TOKEN }}
+      AREA: ${{ matrix.area }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.AXIS_PUSH_TOKEN }}
+      - uses: actions/setup-java@v6
+        with:
+          distribution: zulu
+          java-version: 21
+          cache: gradle
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Check Sigrid system
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $SIGRID_TOKEN" -H "Accept: application/json" \
+            "https://sigrid-says.com/rest/analysis-results/api/v1/system-metadata/sigridsandbox/autofix-zuul")
+          [ "$code" = 200 ] || { echo "Sigrid system check failed (HTTP $code)" >&2; exit 1; }
+      - name: Install Copilot CLI and connect Axis
+        run: |
+          npm install -g @github/copilot
+          copilot mcp add --transport http --header "Authorization: Bearer $SIGRID_TOKEN" axis https://sigrid-says.com/mcp
+          copilot plugin marketplace add Software-Improvement-Group/agent-integrations
+          copilot plugin install axis@sigrid
+      - name: Create fix branch
+        run: |
+          git config user.name "axis-autofix"
+          git config user.email "axis-autofix@users.noreply.github.com"
+          echo "BRANCH=axis-autofix/$AREA-$(date +%Y%m%d)" >> "$GITHUB_ENV"
+          echo "SUMMARY=$RUNNER_TEMP/axis-summary.md" >> "$GITHUB_ENV"
+          git switch -c "axis-autofix/$AREA-$(date +%Y%m%d)"
+      - name: Diagnose and fix
+        env:
+          TASK: ${{ matrix.task }}
+        run: |
+          copilot -p "$TASK Follow AGENTS.md. Commit the fix locally on the current branch; do not push, do not open a pull request and do not change files under .github/. Build with ./gradlew build before committing. Write $SUMMARY stating the finding that was fixed and what changed, or why nothing was changed. Never retry a failed tool call with different arguments." \
+            --allow-tool 'write' \
+            --allow-tool 'read' \
+            --allow-tool 'shell(git add:*)' \
+            --allow-tool 'shell(git commit:*)' \
+            --allow-tool 'shell(git diff:*)' \
+            --allow-tool 'shell(git status:*)' \
+            --allow-tool 'shell(./gradlew:*)' \
+            --allow-tool 'shell(curl:*)' \
+            --allow-tool 'axis' \
+            --log-dir copilot-logs
+      - name: Push branch and open pull request
+        run: |
+          if [ "$(git rev-list --count "origin/${{ github.event.repository.default_branch }}..HEAD")" = 0 ]; then
+            echo "No commits, nothing to open."
+            exit 0
+          fi
+          git push origin "$BRANCH"
+          gh pr create --head "$BRANCH" --base "${{ github.event.repository.default_branch }}" \
+            --title "Axis $AREA: $(git log -1 --format=%s)" \
+            --body-file "$SUMMARY"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: copilot-logs-${{ matrix.area }}
+          path: |
+            copilot-logs
+            ${{ runner.temp }}/axis-summary.md
+          retention-days: 30
