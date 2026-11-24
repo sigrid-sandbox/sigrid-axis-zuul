@@ -118,7 +118,7 @@ subprojects {
 
     ext {
         libraries = [
-                guava: "com.google.guava:guava:33.6.0-jre",
+                guava: "com.google.guava:guava:33.8.0-jre",
                 okhttp: 'com.squareup.okhttp3:okhttp:4.12.0',
                 jupiterApi: 'org.junit.jupiter:junit-jupiter-api:5.13.+',
                 jupiterParams: 'org.junit.jupiter:junit-jupiter-params:5.13.+',
@@ -128,7 +128,7 @@ subprojects {
                 mockito: 'org.mockito:mockito-core:5.+',
 
                 slf4j: "org.slf4j:slf4j-api:2.0.18",
-                assertj: 'org.assertj:assertj-core:3.26.3',
+                assertj: 'org.assertj:assertj-core:3.27.7',
                 awaitility: 'org.awaitility:awaitility:4.2.2',
                 lombok: 'org.projectlombok:lombok:1.18.42'
         ]
