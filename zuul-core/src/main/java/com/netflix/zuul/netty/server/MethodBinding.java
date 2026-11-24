@@ -25,23 +25,12 @@ import java.util.function.BiConsumer;
  * Author: Arthur Gonigberg
  * Date: November 29, 2017
  */
-public class MethodBinding<T> {
-    private final BiConsumer<Runnable, T> boundMethod;
-    private final Callable<T> bindingContextExtractor;
+@Deprecated
+public class MethodBinding<T> extends com.netflix.zuul.netty.MethodBinding<T> {
 
-    public static MethodBinding<?> NO_OP_BINDING = new MethodBinding<>((r, t) -> {}, () -> null);
+    public static final MethodBinding<?> NO_OP_BINDING = new MethodBinding<>((r, t) -> {}, () -> null);
 
     public MethodBinding(BiConsumer<Runnable, T> boundMethod, Callable<T> bindingContextExtractor) {
-        this.boundMethod = boundMethod;
-        this.bindingContextExtractor = bindingContextExtractor;
-    }
-
-    public void bind(Runnable method) throws Exception {
-        T bindingContext = bindingContextExtractor.call();
-        if (bindingContext == null) {
-            method.run();
-        } else {
-            boundMethod.accept(method, bindingContext);
-        }
+        super(boundMethod, bindingContextExtractor);
     }
 }
