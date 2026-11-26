@@ -21,6 +21,7 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * User: michaels@netflix.com
@@ -29,18 +30,12 @@ import java.util.Map;
  */
 @Singleton
 public class EventLoopGroupMetrics {
-    private final ThreadLocal<EventLoopMetrics> metricsForCurrentThread;
-    private final Map<Thread, EventLoopMetrics> byEventLoop = new HashMap<>();
+    private final Registry registry;
+    private final Map<Thread, EventLoopMetrics> byEventLoop = new ConcurrentHashMap<>();
 
     @Inject
     public EventLoopGroupMetrics(Registry registry) {
-
-        this.metricsForCurrentThread = ThreadLocal.withInitial(() -> {
-            String name = nameForCurrentEventLoop();
-            EventLoopMetrics metrics = new EventLoopMetrics(registry, name);
-            byEventLoop.put(Thread.currentThread(), metrics);
-            return metrics;
-        });
+        this.registry = registry;
     }
 
     public Map<Thread, Integer> connectionsPerEventLoop() {
@@ -60,12 +55,13 @@ public class EventLoopGroupMetrics {
     }
 
     public EventLoopMetrics getForCurrentEventLoop() {
-        return metricsForCurrentThread.get();
+        Thread currentThread = Thread.currentThread();
+        return byEventLoop.computeIfAbsent(
+                currentThread, thread -> new EventLoopMetrics(registry, nameForCurrentEventLoop(thread.getName())));
     }
 
-    private static String nameForCurrentEventLoop() {
+    private static String nameForCurrentEventLoop(String threadName) {
         // We're relying on the knowledge that we name the eventloop threads consistently.
-        String threadName = Thread.currentThread().getName();
         String parts[] = threadName.split("-ClientToZuulWorker-", -1);
         if (parts.length == 2) {
             return parts[1];
