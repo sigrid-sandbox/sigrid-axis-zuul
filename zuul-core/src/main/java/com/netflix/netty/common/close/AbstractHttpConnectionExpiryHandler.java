@@ -18,12 +18,11 @@ package com.netflix.netty.common.close;
 
 import com.google.common.base.Preconditions;
 import com.netflix.config.CachedDynamicLongProperty;
-import com.netflix.zuul.netty.ChannelUtils;
-import com.netflix.zuul.util.HttpUtils;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
+import io.netty.handler.codec.http2.Http2StreamChannel;
 import java.time.Clock;
 import java.util.concurrent.ThreadLocalRandom;
 import org.jspecify.annotations.NullMarked;
@@ -77,7 +76,7 @@ public abstract class AbstractHttpConnectionExpiryHandler extends ChannelOutboun
         if (isResponse(msg)) {
             count++;
             if (isConnectionExpired(ctx.channel())) {
-                Channel channel = HttpUtils.getMainChannel(ctx);
+                Channel channel = getMainChannel(ctx.channel());
                 channel.pipeline().fireUserEventTriggered(EXPIRATION_EVENT);
             }
         }
@@ -95,10 +94,26 @@ public abstract class AbstractHttpConnectionExpiryHandler extends ChannelOutboun
                         "Connection is expired. requestCount={}, lifetime={}, {}",
                         count,
                         lifetime,
-                        ChannelUtils.channelInfoForLogging(channel));
+                        channelInfoForLogging(channel));
             }
         }
         return expired;
+    }
+
+    private static Channel getMainChannel(Channel channel) {
+        if (channel instanceof Http2StreamChannel) {
+            return channel.parent();
+        }
+        return channel;
+    }
+
+    private static String channelInfoForLogging(Channel channel) {
+        if (channel == null) {
+            return "null";
+        }
+
+        return "Channel: " + channel + ", active=" + channel.isActive() + ", open=" + channel.isOpen()
+                + ", registered=" + channel.isRegistered() + ", writable=" + channel.isWritable();
     }
 
     int getCount() {
