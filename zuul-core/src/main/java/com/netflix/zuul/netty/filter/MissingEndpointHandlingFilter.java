@@ -14,7 +14,7 @@
  *      limitations under the License.
  */
 
-package com.netflix.zuul.filters.endpoint;
+package com.netflix.zuul.netty.filter;
 
 import com.netflix.zuul.Filter;
 import com.netflix.zuul.context.SessionContext;
