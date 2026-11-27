@@ -1,12 +1,17 @@
 name: axis-autofix-review
 
 # Reviews pull requests opened by the axis-autofix app. The Copilot CLI only writes a verdict; this
-# workflow acts on it. When the deterministic limits hold and the verdict is SAFE, the pull request
-# is approved by github-actions and auto-merge is enabled, so branch protection (required checks)
-# still decides when the merge happens.
+# workflow acts on it. When the deterministic limits hold and the verdict is SAFE, it waits for the
+# other checks (build, Sigrid objectives, architecture drift) and merges only if all of them pass.
+# In every other case, including a failure of this job, it asks the reviewer to take over.
+# The waiting and the merge happen here because this repository has no branch protection.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: axis-autofix-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   review:
@@ -15,17 +20,28 @@ jobs:
       && github.event.pull_request.user.login == 'axis-autofix[bot]'
       && startsWith(github.event.pull_request.head.ref, 'axis-autofix/') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       pull-requests: write
+      checks: read
       copilot-requests: write
     env:
       GITHUB_TOKEN: ${{ github.token }}
       GH_TOKEN: ${{ github.token }}
       PR: ${{ github.event.pull_request.number }}
       BASE: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      REVIEWER: maximjanssen
       VERDICT_FILE: verdict.md
       MAX_CHANGED_LINES: 300
+      # Names of the check runs that must succeed before the merge.
+      REQUIRED_CHECKS: |
+        build (21)
+        sigridci
+        drift-review
+      CHECKS_TIMEOUT_SECONDS: 2400
+    # Steps that decide not to merge set REASON in the environment, for the final comment.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -34,13 +50,13 @@ jobs:
         id: limits
         run: |
           if git diff --name-only "$BASE" HEAD | grep -q '^\.github/'; then
-            echo "The pull request changes .github/, a person must review it."
+            echo "REASON=The pull request changes .github/." >> "$GITHUB_ENV"
             echo "within_limits=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed=$(git diff --numstat "$BASE" HEAD | awk '{ total += $1 + $2 } END { print total + 0 }')
           if [ "$changed" -gt "$MAX_CHANGED_LINES" ]; then
-            echo "$changed changed lines exceeds the limit of $MAX_CHANGED_LINES, a person must review it."
+            echo "REASON=$changed changed lines exceeds the limit of $MAX_CHANGED_LINES." >> "$GITHUB_ENV"
             echo "within_limits=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -65,32 +81,64 @@ jobs:
           if [ -f "$VERDICT_FILE" ] && [ "$(head -n 1 "$VERDICT_FILE")" = "SAFE" ]; then
             echo "safe=true" >> "$GITHUB_OUTPUT"
           else
+            echo "REASON=The review did not find the change SAFE." >> "$GITHUB_ENV"
             echo "safe=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Approve as github-actions
+      - name: Post verdict
+        if: steps.limits.outputs.within_limits == 'true' && hashFiles('verdict.md') != ''
+        run: tail -n +2 "$VERDICT_FILE" | gh pr comment "$PR" --body-file -
+      - name: Wait for the other checks
+        id: checks
         if: steps.verdict.outputs.safe == 'true'
-        run: gh pr review "$PR" --approve --body-file "$VERDICT_FILE"
-      # The auto-merge request is made as the app, so the merge starts the workflows on main.
+        run: |
+          stop_without_merge() {
+            echo "REASON=$1" >> "$GITHUB_ENV"
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          deadline=$((SECONDS + CHECKS_TIMEOUT_SECONDS))
+          while true; do
+            runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs" --paginate \
+              --jq '.check_runs[] | "\(.name)\t\(.status)/\(.conclusion)"')
+            pending=false
+            while IFS= read -r check; do
+              [ -n "$check" ] || continue
+              state=$(awk -F'\t' -v name="$check" '$1 == name { print $2 }' <<< "$runs")
+              case "$state" in
+                completed/success) ;;
+                ""|queued/*|in_progress/*|waiting/*|pending/*) pending=true ;;
+                *) stop_without_merge "The check '$check' ended as '$state'." ;;
+              esac
+            done <<< "$REQUIRED_CHECKS"
+            if [ "$pending" = false ]; then
+              echo "passed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              stop_without_merge "The required checks did not finish in time."
+            fi
+            sleep 30
+          done
+      # The merge is made as the app, so it starts the workflows on main.
       - name: Create axis-autofix app token
         id: app-token
-        if: steps.verdict.outputs.safe == 'true'
+        if: steps.checks.outputs.passed == 'true'
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ vars.AXIS_APP_ID }}
           private-key: ${{ secrets.AXIS_APP_PRIVATE_KEY }}
-      - name: Enable auto-merge
-        if: steps.verdict.outputs.safe == 'true'
+      - name: Merge
+        id: merge
+        if: steps.checks.outputs.passed == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: gh pr merge "$PR" --auto --squash
-      - name: Explain why a person must review
-        if: steps.verdict.outputs.safe != 'true'
+        run: gh pr merge "$PR" --squash --match-head-commit "$HEAD_SHA"
+      - name: Ask the reviewer to take over
+        if: ${{ !cancelled() && steps.merge.outcome != 'success' }}
         run: |
-          if [ -f "$VERDICT_FILE" ]; then
-            gh pr comment "$PR" --body-file "$VERDICT_FILE"
-          else
-            gh pr comment "$PR" --body "Not auto-merged: the pull request is over the review limits or no verdict was produced. A person must review it."
-          fi
+          reason="${REASON:-This review job did not complete, see the workflow run.}"
+          gh pr edit "$PR" --add-reviewer "$REVIEWER"
+          gh pr comment "$PR" --body "Not merged, @$REVIEWER please review. $reason"
       - uses: actions/upload-artifact@v6
         if: always()
         with:
