@@ -27,6 +27,8 @@ import io.netty.util.AttributeKey;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
@@ -50,8 +52,8 @@ public final class ConnCounter {
      * PER_EVENT_LOOP_COUNTERS exists to reduce the number of PolledMeters that are created. Any given Id will have a
      * PolledMeter created for every event loop, with spectator responsible for summing up the values.
      */
-    private static final ThreadLocal<Map<Id, AtomicInteger>> PER_EVENT_LOOP_COUNTERS =
-            ThreadLocal.withInitial(HashMap::new);
+    private static final ConcurrentMap<Thread, ConcurrentMap<Id, AtomicInteger>> PER_EVENT_LOOP_COUNTERS =
+            new ConcurrentHashMap<>();
 
     private final Registry registry;
     private final Channel chan;
@@ -107,7 +109,7 @@ public final class ConnCounter {
                 .withTags(metricBase.tags())
                 .withTags(dimTags);
 
-        AtomicInteger count = PER_EVENT_LOOP_COUNTERS.get().computeIfAbsent(id, key -> {
+        AtomicInteger count = countersForCurrentThread().computeIfAbsent(id, key -> {
             AtomicInteger counter = new AtomicInteger();
             PolledMeter.using(registry).withId(key).monitorValue(counter);
             return counter;
@@ -122,7 +124,7 @@ public final class ConnCounter {
             return 0.0;
         }
 
-        AtomicInteger count = PER_EVENT_LOOP_COUNTERS.get().get(id);
+        AtomicInteger count = countersForCurrentThread().get(id);
         return count == null ? 0.0 : count.get();
     }
 
@@ -137,11 +139,15 @@ public final class ConnCounter {
 
         // remove the strong reference when the counter hits zero so the gauge can eventually be GC'd. This is so we
         // don't waste memory around higher cardinality attributes that can be short-lived (like vips)
-        PER_EVENT_LOOP_COUNTERS.get().computeIfPresent(id, (k, v) -> v.decrementAndGet() <= 0 ? null : v);
+        countersForCurrentThread().computeIfPresent(id, (k, v) -> v.decrementAndGet() <= 0 ? null : v);
+    }
+
+    private static ConcurrentMap<Id, AtomicInteger> countersForCurrentThread() {
+        return PER_EVENT_LOOP_COUNTERS.computeIfAbsent(Thread.currentThread(), key -> new ConcurrentHashMap<>());
     }
 
     @VisibleForTesting
     static void clearCache() {
-        PER_EVENT_LOOP_COUNTERS.get().clear();
+        PER_EVENT_LOOP_COUNTERS.clear();
     }
 }

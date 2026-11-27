@@ -120,6 +120,12 @@ public class Bootstrap {
             logger.info(
                     "Zuul Sample: finished startup. Duration = {}ms", TimeUnit.NANOSECONDS.toMillis(startupDuration));
             server.awaitTermination();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            System.err.println("###############");
+            System.err.println("Zuul Sample: interrupted while waiting for shutdown.");
+            System.err.println("###############");
+            exitCode = 1;
         } catch (Throwable t) {
             // Don't use logger here, as we may be shutting down the JVM and the logs won't be printed.
             t.printStackTrace();
