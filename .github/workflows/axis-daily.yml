@@ -1,8 +1,9 @@
 name: axis-daily
 
 # Each run diagnoses one area with the Copilot CLI, lets it commit the top fix on a branch, then
-# pushes the branch and opens a pull request. The push and the pull request use a PAT, because
-# events created with GITHUB_TOKEN do not start the PR Build, Sigrid or drift review workflows.
+# pushes the branch and opens a pull request. The push and the pull request use a token of the
+# axis-autofix GitHub App, because events created with GITHUB_TOKEN do not start the PR Build,
+# Sigrid, drift review or autofix review workflows.
 on:
   schedule:
     - cron: "0 11 * * *"
@@ -44,10 +45,16 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       AREA: ${{ matrix.area }}
     steps:
+      - name: Create axis-autofix app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AXIS_APP_ID }}
+          private-key: ${{ secrets.AXIS_APP_PRIVATE_KEY }}
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          token: ${{ secrets.AXIS_PUSH_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -58,8 +65,8 @@ jobs:
           npx --yes skills add Software-Improvement-Group/agent-integrations --skill '*' -a github-copilot -y
       - name: Create fix branch
         run: |
-          git config user.name "axis-autofix"
-          git config user.email "axis-autofix@users.noreply.github.com"
+          git config user.name "axis-autofix[bot]"
+          git config user.email "${{ vars.AXIS_APP_ID }}+axis-autofix[bot]@users.noreply.github.com"
           branch="axis-autofix/$AREA-$(date +%Y%m%d-%H%M%S)"
           echo "BRANCH=$branch" >> "$GITHUB_ENV"
           echo "OBJECTIVES=$RUNNER_TEMP/objectives.json" >> "$GITHUB_ENV"
@@ -88,8 +95,8 @@ jobs:
             --log-dir copilot-logs
       - name: Push branch and open pull request
         env:
-          # A PAT, so the pull request starts the PR Build, Sigrid and drift review workflows.
-          GH_TOKEN: ${{ secrets.AXIS_PUSH_TOKEN }}
+          # An app token, so the pull request starts the PR Build, Sigrid and review workflows.
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           if [ "$(git rev-list --count "origin/${{ github.event.repository.default_branch }}..HEAD")" = 0 ]; then
             echo "No commits, nothing to open."
