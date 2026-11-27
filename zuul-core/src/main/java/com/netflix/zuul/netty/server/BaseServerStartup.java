@@ -158,6 +158,10 @@ public abstract class BaseServerStartup {
     protected void addChannelDependencies(
             ChannelConfig channelDeps,
             @SuppressWarnings("unused") String listenAddressName) { // listenAddressName may be overridden by subclasse
+        populateChannelDependencies(channelDeps);
+    }
+
+    private void populateChannelDependencies(ChannelConfig channelDeps) {
         channelDeps.set(ZuulDependencyKeys.registry, registry);
 
         channelDeps.set(ZuulDependencyKeys.applicationInfoManager, applicationInfoManager);
@@ -186,29 +190,7 @@ public abstract class BaseServerStartup {
     protected void addChannelDependencies(
             ChannelConfig channelDeps,
             @SuppressWarnings("unused") ListenerSpec listenerSpec) { // listenerSpec may be overridden by subclasses
-        channelDeps.set(ZuulDependencyKeys.registry, registry);
-
-        channelDeps.set(ZuulDependencyKeys.applicationInfoManager, applicationInfoManager);
-        channelDeps.set(ZuulDependencyKeys.serverStatusManager, serverStatusManager);
-
-        channelDeps.set(ZuulDependencyKeys.accessLogPublisher, accessLogPublisher);
-
-        channelDeps.set(ZuulDependencyKeys.sessionCtxDecorator, sessionCtxDecorator);
-        channelDeps.set(ZuulDependencyKeys.requestCompleteHandler, reqCompleteHandler);
-        Counter httpRequestHeadersReadTimeoutCounter = registry.counter("server.http.request.headers.read.timeout");
-        channelDeps.set(ZuulDependencyKeys.httpRequestHeadersReadTimeoutCounter, httpRequestHeadersReadTimeoutCounter);
-        PercentileTimer httpRequestHeadersReadTimer =
-                PercentileTimer.get(registry, registry.createId("server.http.request.headers.read.timer"));
-        channelDeps.set(ZuulDependencyKeys.httpRequestHeadersReadTimer, httpRequestHeadersReadTimer);
-        Counter httpRequestReadTimeoutCounter = registry.counter("server.http.request.read.timeout");
-        channelDeps.set(ZuulDependencyKeys.httpRequestReadTimeoutCounter, httpRequestReadTimeoutCounter);
-        channelDeps.set(ZuulDependencyKeys.filterLoader, filterLoader);
-        channelDeps.set(ZuulDependencyKeys.filterUsageNotifier, usageNotifier);
-
-        channelDeps.set(ZuulDependencyKeys.eventLoopGroupMetrics, eventLoopGroupMetrics);
-
-        channelDeps.set(ZuulDependencyKeys.sslClientCertCheckChannelHandlerProvider, new NullChannelHandlerProvider());
-        channelDeps.set(ZuulDependencyKeys.rateLimitingChannelHandlerProvider, new NullChannelHandlerProvider());
+        populateChannelDependencies(channelDeps);
     }
 
     /**
