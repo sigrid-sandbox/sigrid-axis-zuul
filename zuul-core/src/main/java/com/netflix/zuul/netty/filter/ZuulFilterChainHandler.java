@@ -22,7 +22,6 @@ import com.netflix.netty.common.HttpRequestReadTimeoutEvent;
 import com.netflix.zuul.context.CommonContextKeys;
 import com.netflix.zuul.context.SessionContext;
 import com.netflix.zuul.filters.ZuulFilter;
-import com.netflix.zuul.filters.endpoint.EndpointLifecycle;
 import com.netflix.zuul.message.Headers;
 import com.netflix.zuul.message.http.HttpRequestMessage;
 import com.netflix.zuul.message.http.HttpResponseMessage;
