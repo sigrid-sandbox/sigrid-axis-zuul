@@ -29,7 +29,6 @@ import com.netflix.zuul.filters.FilterType;
 import com.netflix.zuul.filters.SyncZuulFilterAdapter;
 import com.netflix.zuul.filters.ZuulFilter;
 import com.netflix.zuul.filters.endpoint.EndpointLifecycle;
-import com.netflix.zuul.filters.endpoint.MissingEndpointHandlingFilter;
 import com.netflix.zuul.filters.endpoint.ProxyEndpoint;
 import com.netflix.zuul.message.ZuulMessage;
 import com.netflix.zuul.message.http.HttpRequestMessage;

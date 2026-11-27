@@ -422,6 +422,7 @@ public class Server {
                     group.awaitTermination(20, TimeUnit.SECONDS);
                 } catch (InterruptedException ie) {
                     LOG.warn("Interrupted while shutting down event loop");
+                    Thread.currentThread().interrupt();
                 }
             }
 
