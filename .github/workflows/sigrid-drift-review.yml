@@ -35,7 +35,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          copilot -p "Review pull request $PR for architecture drift using the architecture-drift skill in autonomous mode. Sigrid customer and system are in .sigrid/profile.md. Scope the diff to exactly this pull request: use 'git diff $BASE HEAD', not local uncommitted changes. When you are done, write one markdown comment to $COMMENT_FILE: if drift was found, its findings (what changed, why it is drift, which files to touch instead); otherwise a short note stating that no architecture drift was found. If the check cannot complete, write a comment explaining what blocked it. Do not post the comment yourself. Never modify any other file, never open or merge pull requests, and never retry a failed tool call with different arguments." \
+          copilot -p "Review pull request $PR for architecture drift using the architecture-drift skill in autonomous mode. Sigrid customer and system are in .sigrid/profile.md. Scope the diff to exactly this pull request: use 'git diff $BASE HEAD', not local uncommitted changes. When you are done, write one markdown comment to $COMMENT_FILE. Its first line is exactly DRIFT: found, DRIFT: none or DRIFT: blocked (the check could not complete). The following lines are the comment: if drift was found, its findings (what changed, why it is drift, which files to touch instead); otherwise a short note stating that no architecture drift was found. If the check cannot complete, write a comment explaining what blocked it. Do not post the comment yourself. Never modify any other file, never open or merge pull requests, and never retry a failed tool call with different arguments." \
             --allow-tool 'shell(git diff:*)' \
             --allow-tool 'read' \
             --allow-tool 'write' \
@@ -52,7 +52,12 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR: ${{ github.event.pull_request.number }}
-        run: gh pr comment "$PR" --body-file "$COMMENT_FILE"
+        run: tail -n +2 "$COMMENT_FILE" | gh pr comment "$PR" --body-file -
+      # Fails the check unless no drift was found, so the autofix review can wait for this result.
+      - name: Fail on drift
+        run: |
+          result=$(head -n 1 "$COMMENT_FILE")
+          [ "$result" = "DRIFT: none" ] || { echo "Architecture drift check result: $result"; exit 1; }
       - uses: actions/upload-artifact@v6
         if: always()
         with:
