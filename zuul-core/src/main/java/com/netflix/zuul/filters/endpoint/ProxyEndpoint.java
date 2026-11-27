@@ -54,6 +54,7 @@ import com.netflix.zuul.netty.connectionpool.ClientTimeoutHandler;
 import com.netflix.zuul.netty.connectionpool.DefaultOriginChannelInitializer;
 import com.netflix.zuul.netty.connectionpool.PooledConnection;
 import com.netflix.zuul.netty.connectionpool.RequestStat;
+import com.netflix.zuul.netty.filter.EndpointLifecycle;
 import com.netflix.zuul.netty.filter.FilterRunner;
 import com.netflix.zuul.netty.server.ClientRequestReceiver;
 import com.netflix.zuul.netty.server.MethodBinding;

@@ -14,7 +14,7 @@
  *      limitations under the License.
  */
 
-package com.netflix.zuul.filters.endpoint;
+package com.netflix.zuul.netty.filter;
 
 /**
  * Lifecycle contract for endpoints that manage their own async response flow.
