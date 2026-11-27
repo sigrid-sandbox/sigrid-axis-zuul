@@ -30,6 +30,8 @@ import com.netflix.zuul.message.http.HttpResponseMessageImpl;
 import com.netflix.zuul.netty.ChannelUtils;
 import com.netflix.zuul.netty.RequestCancelledEvent;
 import com.netflix.zuul.netty.SpectatorUtils;
+import com.netflix.zuul.passport.CurrentPassport;
+import com.netflix.zuul.passport.PassportState;
 import com.netflix.zuul.netty.server.ClientRequestReceiver;
 import com.netflix.zuul.stats.status.StatusCategory;
 import com.netflix.zuul.stats.status.StatusCategoryUtils;
@@ -91,6 +93,7 @@ public class ZuulFilterChainHandler extends ChannelInboundHandlerAdapter {
             fireEndpointFinish(
                     completeEvent.getReason() != HttpLifecycleChannelHandler.CompleteReason.SESSION_COMPLETE, ctx);
         } else if (evt instanceof HttpRequestReadTimeoutEvent) {
+            CurrentPassport.fromChannel(ctx.channel()).add(PassportState.IN_REQ_READ_TIMEOUT);
             sendResponse(ZuulStatusCategory.FAILURE_CLIENT_TIMEOUT, 408, ctx);
         } else if (evt instanceof IdleStateEvent) {
             sendResponse(ZuulStatusCategory.FAILURE_LOCAL_IDLE_TIMEOUT, 504, ctx);
