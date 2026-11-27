@@ -63,78 +63,136 @@ public class AccessLogPublisher {
             Long durationNs,
             Long requestBodySize,
             Long responseBodySize) {
-        StringBuilder sb = new StringBuilder(512);
+        AccessLogEntry entry = new AccessLogEntry();
+        entry.dateTime = dateTimeField(dateTime);
+        entry.remoteIp = remoteIpField(remoteIp);
+        entry.localPort = localPortField(localPort);
+        entry.method = requestMethod(request);
+        entry.uri = requestUri(request);
+        entry.requestId = requestId(channel, request);
+        entry.requestHeaders = request != null ? request.headers() : null;
+        entry.status = responseStatus(response);
+        entry.responseHeaders = response != null ? response.headers() : null;
+        entry.duration = durationField(durationNs);
+        entry.requestBodySize = requestBodySizeField(requestBodySize);
+        entry.responseBodySize = responseBodySizeField(responseBodySize);
 
-        String dateTimeStr = dateTime != null ? dateTime.format(DATE_TIME_FORMATTER) : "-----T-:-:-";
-        String remoteIpStr = (remoteIp != null && !remoteIp.isEmpty()) ? remoteIp : "-";
-        String port = localPort != null ? localPort.toString() : "-";
-        String method = request != null ? request.method().toString().toUpperCase(Locale.ROOT) : "-";
-        String uri = request != null ? request.uri() : "-";
-        if (uri.length() > URI_LENGTH_LIMIT.get()) {
-            uri = uri.substring(0, URI_LENGTH_LIMIT.get());
-        }
-        String status = response != null ? String.valueOf(response.status().code()) : "-";
-
-        String requestId = null;
-        try {
-            requestId = requestIdProvider.apply(channel, request);
-        } catch (Exception ex) {
-            LOG.error(
-                    "requestIdProvider failed in AccessLogPublisher method={}, uri={}, status={}", method, uri, status);
-        }
-        requestId = requestId != null ? requestId : "-";
-
-        // Convert duration to microseconds.
-        String durationStr = (durationNs != null && durationNs > 0) ? String.valueOf(durationNs / 1000) : "-";
-
-        String requestBodySizeStr = (requestBodySize != null && requestBodySize > 0) ? requestBodySize.toString() : "-";
-        String responseBodySizeStr =
-                (responseBodySize != null && responseBodySize > 0) ? responseBodySize.toString() : "-";
-
-        // Build the line.
-        sb.append(dateTimeStr)
-                .append(DELIM)
-                .append(remoteIpStr)
-                .append(DELIM)
-                .append(port)
-                .append(DELIM)
-                .append(method)
-                .append(DELIM)
-                .append(uri)
-                .append(DELIM)
-                .append(status)
-                .append(DELIM)
-                .append(durationStr)
-                .append(DELIM)
-                .append(responseBodySizeStr)
-                .append(DELIM)
-                .append(requestId)
-                .append(DELIM)
-                .append(requestBodySizeStr);
-
-        if (request != null && request.headers() != null) {
-            includeMatchingHeaders(sb, LOG_REQ_HEADERS, request.headers());
-        }
-
-        if (response != null && response.headers() != null) {
-            includeMatchingHeaders(sb, LOG_RESP_HEADERS, response.headers());
-        }
-
-        // Write to logger.
-        String access = sb.toString();
+        String access = buildAccessLogLine(entry);
         logger.info(access);
         LOG.debug(access);
     }
 
-    void includeMatchingHeaders(StringBuilder builder, List<String> requiredHeaders, HttpHeaders headers) {
-        for (String headerName : requiredHeaders) {
-            String value = headerAsString(headers, headerName);
-            builder.append(DELIM).append('\"').append(value).append('\"');
+    String buildAccessLogLine(AccessLogEntry entry) {
+        StringBuilder builder = new StringBuilder(512);
+
+        appendBaseFields(builder, entry);
+        appendLogHeaders(builder, entry);
+        return builder.toString();
+    }
+
+    private void appendBaseFields(StringBuilder builder, AccessLogEntry entry) {
+        appendField(builder, entry.dateTime);
+        appendField(builder, entry.remoteIp);
+        appendField(builder, entry.localPort);
+        appendField(builder, entry.method);
+        appendField(builder, entry.uri);
+        appendField(builder, entry.status);
+        appendField(builder, entry.duration);
+        appendField(builder, entry.responseBodySize);
+        appendField(builder, entry.requestId);
+        builder.append(entry.requestBodySize);
+    }
+
+    private void appendLogHeaders(StringBuilder builder, AccessLogEntry entry) {
+        if (entry.requestHeaders != null) {
+            appendRequestHeaders(builder, entry.requestHeaders);
+        }
+
+        if (entry.responseHeaders != null) {
+            appendResponseHeaders(builder, entry.responseHeaders);
+        }
+    }
+
+    private String dateTimeField(LocalDateTime dateTime) {
+        return dateTime != null ? dateTime.format(DATE_TIME_FORMATTER) : "-----T-:-:-";
+    }
+
+    private String remoteIpField(String remoteIp) {
+        return (remoteIp != null && !remoteIp.isEmpty()) ? remoteIp : "-";
+    }
+
+    private String localPortField(Integer localPort) {
+        return localPort != null ? localPort.toString() : "-";
+    }
+
+    private String requestMethod(HttpRequest request) {
+        return request != null ? request.method().toString().toUpperCase(Locale.ROOT) : "-";
+    }
+
+    private String requestUri(HttpRequest request) {
+        String uri = request != null ? request.uri() : "-";
+        return uri.length() > URI_LENGTH_LIMIT.get() ? uri.substring(0, URI_LENGTH_LIMIT.get()) : uri;
+    }
+
+    private String responseStatus(HttpResponse response) {
+        return response != null ? String.valueOf(response.status().code()) : "-";
+    }
+
+    private String requestId(Channel channel, HttpRequest request) {
+        try {
+            String requestId = requestIdProvider.apply(channel, request);
+            return requestId != null ? requestId : "-";
+        } catch (Exception ex) {
+            LOG.error("requestIdProvider failed in AccessLogPublisher", ex);
+            return "-";
+        }
+    }
+
+    private String durationField(Long durationNs) {
+        return (durationNs != null && durationNs > 0) ? String.valueOf(durationNs / 1000) : "-";
+    }
+
+    private String requestBodySizeField(Long requestBodySize) {
+        return (requestBodySize != null && requestBodySize > 0) ? requestBodySize.toString() : "-";
+    }
+
+    private String responseBodySizeField(Long responseBodySize) {
+        return (responseBodySize != null && responseBodySize > 0) ? responseBodySize.toString() : "-";
+    }
+
+    private void appendField(StringBuilder builder, String value) {
+        builder.append(value).append(DELIM);
+    }
+
+    private void appendRequestHeaders(StringBuilder builder, HttpHeaders headers) {
+        for (String headerName : LOG_REQ_HEADERS) {
+            builder.append(DELIM).append('\"').append(headerAsString(headers, headerName)).append('\"');
+        }
+    }
+
+    private void appendResponseHeaders(StringBuilder builder, HttpHeaders headers) {
+        for (String headerName : LOG_RESP_HEADERS) {
+            builder.append(DELIM).append('\"').append(headerAsString(headers, headerName)).append('\"');
         }
     }
 
     String headerAsString(HttpHeaders headers, String headerName) {
         List<String> values = headers.getAll(headerName);
         return values.isEmpty() ? "-" : String.join(",", values);
+    }
+
+    static final class AccessLogEntry {
+        String dateTime;
+        String remoteIp;
+        String localPort;
+        String method;
+        String uri;
+        String status;
+        String duration;
+        String responseBodySize;
+        String requestId;
+        String requestBodySize;
+        HttpHeaders requestHeaders;
+        HttpHeaders responseHeaders;
     }
 }
