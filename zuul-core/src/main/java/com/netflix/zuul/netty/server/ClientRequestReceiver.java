@@ -122,109 +122,160 @@ public class ClientRequestReceiver extends ChannelDuplexHandler {
     }
 
     private void channelReadInternal(ChannelHandlerContext ctx, Object msg) {
+        markLastContentReceived(ctx, msg);
+
+        if (msg instanceof HttpRequest httpRequest) {
+            handleHttpRequest(ctx, httpRequest);
+            return;
+        }
+
+        if (msg instanceof HttpContent) {
+            handleHttpContent(ctx, msg);
+            return;
+        }
+
+        if (msg instanceof HAProxyMessage haProxyMessage) {
+            handleHAProxyMessage(msg, haProxyMessage);
+            return;
+        }
+
+        handleUnknownMessage(msg);
+    }
+
+    private void markLastContentReceived(ChannelHandlerContext ctx, Object msg) {
         // Flag that we have now received the LastContent for this request from the client.
         // This is needed for ClientResponseReceiver to know whether it's yet safe to start writing
         // a response to the client channel.
         if (msg instanceof LastHttpContent) {
             ctx.channel().attr(ATTR_LAST_CONTENT_RECEIVED).set(true);
         }
+    }
 
-        if (msg instanceof HttpRequest httpRequest) {
-            clientRequest = httpRequest;
+    private void handleHttpRequest(ChannelHandlerContext ctx, HttpRequest httpRequest) {
+        clientRequest = httpRequest;
+        zuulRequest = buildZuulHttpRequest(clientRequest, ctx);
 
-            zuulRequest = buildZuulHttpRequest(clientRequest, ctx);
-
-            // Handle invalid HTTP requests.
-            if (clientRequest.decoderResult().isFailure()) {
-                String clientIp = Objects.requireNonNullElse(getClientIp(ctx.channel()), "unknown");
-                LOG.warn(
-                        "Invalid http request. clientRequest = {}, clientIp = {}, info = {}",
-                        clientRequest,
-                        clientIp,
-                        ChannelUtils.channelInfoForLogging(ctx.channel()),
-                        clientRequest.decoderResult().cause());
-                StatusCategoryUtils.setStatusCategory(
-                        zuulRequest.getContext(),
-                        ZuulStatusCategory.FAILURE_CLIENT_BAD_REQUEST,
-                        "Invalid request provided: Decode failure");
-                RejectionUtils.rejectByClosingConnection(
-                        ctx, ZuulStatusCategory.FAILURE_CLIENT_BAD_REQUEST, "decodefailure", clientRequest, null);
-                return;
-            } else if (zuulRequest.getContext().containsKey(CommonContextKeys.BAD_URI_REASON)) {
-                String clientIp = Objects.requireNonNullElse(getClientIp(ctx.channel()), "unknown");
-                String badUriReason = zuulRequest.getContext().get(CommonContextKeys.BAD_URI_REASON);
-                LOG.warn(
-                        "Invalid URI in request. reason = {}, clientRequest = {}, clientIp = {}, info = {}",
-                        badUriReason,
-                        clientRequest,
-                        clientIp,
-                        ChannelUtils.channelInfoForLogging(ctx.channel()));
-                StatusCategoryUtils.setStatusCategory(
-                        zuulRequest.getContext(), ZuulStatusCategory.FAILURE_CLIENT_BAD_REQUEST, badUriReason);
-                RejectionUtils.sendRejectionResponse(
-                        ctx,
-                        ZuulStatusCategory.FAILURE_CLIENT_BAD_REQUEST,
-                        "invaliduri",
-                        clientRequest,
-                        null,
-                        HttpResponseStatus.BAD_REQUEST,
-                        badUriReason,
-                        Map.of());
-                return;
-            } else if (zuulRequest.hasBody() && zuulRequest.getBodyLength() > zuulRequest.getMaxBodySize()) {
-                String errorMsg = "Request too large. "
-                        + "clientRequest = " + clientRequest.toString()
-                        + ", uri = " + clientRequest.uri()
-                        + ", info = " + ChannelUtils.channelInfoForLogging(ctx.channel());
-                ZuulException ze = new ZuulException(errorMsg);
-                ze.setStatusCode(HttpResponseStatus.REQUEST_ENTITY_TOO_LARGE.code());
-                StatusCategoryUtils.setStatusCategory(
-                        zuulRequest.getContext(),
-                        ZuulStatusCategory.FAILURE_CLIENT_BAD_REQUEST,
-                        "Invalid request provided: Request body size " + zuulRequest.getBodyLength()
-                                + " is above limit of " + zuulRequest.getMaxBodySize());
-                zuulRequest.getContext().setError(ze);
-                zuulRequest.getContext().setShouldSendErrorResponse(true);
-            } else if (zuulRequest
-                            .getHeaders()
-                            .getAll(HttpHeaderNames.HOST.toString())
-                            .size()
-                    > 1) {
-                LOG.debug(
-                        "Multiple Host headers. clientRequest = {} , uri = {}, info = {}",
-                        clientRequest,
-                        clientRequest.uri(),
-                        ChannelUtils.channelInfoForLogging(ctx.channel()));
-                ZuulException ze = new ZuulException("Multiple Host headers");
-                ze.setStatusCode(HttpResponseStatus.BAD_REQUEST.code());
-                StatusCategoryUtils.setStatusCategory(
-                        zuulRequest.getContext(),
-                        ZuulStatusCategory.FAILURE_CLIENT_BAD_REQUEST,
-                        "Invalid request provided: Multiple Host headers");
-                zuulRequest.getContext().setError(ze);
-                zuulRequest.getContext().setShouldSendErrorResponse(true);
-            }
-
-            handleExpect100Continue(ctx, clientRequest);
-
-            // Send the request down the filter pipeline
-            ctx.fireChannelRead(zuulRequest);
-        } else if (msg instanceof HttpContent) {
-            if ((zuulRequest != null) && !zuulRequest.getContext().isCancelled()) {
-                ctx.fireChannelRead(msg);
-            } else {
-                // We already sent response for this request, these are laggard request body chunks that are still
-                // arriving
-                ReferenceCountUtil.release(msg);
-            }
-        } else if (msg instanceof HAProxyMessage haProxyMessage) {
-            // do nothing, should already be handled by ElbProxyProtocolHandler
-            LOG.debug("Received HAProxyMessage for Proxy Protocol IP: {}", haProxyMessage.sourceAddress());
-            ReferenceCountUtil.release(msg);
-        } else {
-            LOG.debug("Received unrecognized message type. {}", msg.getClass().getName());
-            ReferenceCountUtil.release(msg);
+        if (isRejectedHttpRequest(ctx, clientRequest, zuulRequest)) {
+            return;
         }
+
+        handleExpect100Continue(ctx, clientRequest);
+
+        // Send the request down the filter pipeline
+        ctx.fireChannelRead(zuulRequest);
+    }
+
+    private boolean isRejectedHttpRequest(
+            ChannelHandlerContext ctx, HttpRequest nettyRequest, HttpRequestMessage incomingZuulRequest) {
+        if (isDecoderFailure(ctx, nettyRequest, incomingZuulRequest)) {
+            return true;
+        }
+
+        if (isBadUri(ctx, nettyRequest, incomingZuulRequest)) {
+            return true;
+        }
+
+        if (incomingZuulRequest.hasBody() && incomingZuulRequest.getBodyLength() > incomingZuulRequest.getMaxBodySize()) {
+            String errorMsg = "Request too large. "
+                    + "clientRequest = " + nettyRequest.toString()
+                    + ", uri = " + nettyRequest.uri()
+                    + ", info = " + ChannelUtils.channelInfoForLogging(ctx.channel());
+            ZuulException ze = new ZuulException(errorMsg);
+            ze.setStatusCode(HttpResponseStatus.REQUEST_ENTITY_TOO_LARGE.code());
+            StatusCategoryUtils.setStatusCategory(
+                    incomingZuulRequest.getContext(),
+                    ZuulStatusCategory.FAILURE_CLIENT_BAD_REQUEST,
+                    "Invalid request provided: Request body size " + incomingZuulRequest.getBodyLength()
+                            + " is above limit of " + incomingZuulRequest.getMaxBodySize());
+            incomingZuulRequest.getContext().setError(ze);
+            incomingZuulRequest.getContext().setShouldSendErrorResponse(true);
+        } else if (incomingZuulRequest.getHeaders().getAll(HttpHeaderNames.HOST.toString()).size() > 1) {
+            LOG.debug(
+                    "Multiple Host headers. clientRequest = {} , uri = {}, info = {}",
+                    nettyRequest,
+                    nettyRequest.uri(),
+                    ChannelUtils.channelInfoForLogging(ctx.channel()));
+            ZuulException ze = new ZuulException("Multiple Host headers");
+            ze.setStatusCode(HttpResponseStatus.BAD_REQUEST.code());
+            StatusCategoryUtils.setStatusCategory(
+                    incomingZuulRequest.getContext(),
+                    ZuulStatusCategory.FAILURE_CLIENT_BAD_REQUEST,
+                    "Invalid request provided: Multiple Host headers");
+            incomingZuulRequest.getContext().setError(ze);
+            incomingZuulRequest.getContext().setShouldSendErrorResponse(true);
+        }
+
+        return false;
+    }
+
+    private boolean isDecoderFailure(
+            ChannelHandlerContext ctx, HttpRequest nettyRequest, HttpRequestMessage incomingZuulRequest) {
+        if (!nettyRequest.decoderResult().isFailure()) {
+            return false;
+        }
+
+        String clientIp = Objects.requireNonNullElse(getClientIp(ctx.channel()), "unknown");
+        LOG.warn(
+                "Invalid http request. clientRequest = {}, clientIp = {}, info = {}",
+                nettyRequest,
+                clientIp,
+                ChannelUtils.channelInfoForLogging(ctx.channel()),
+                nettyRequest.decoderResult().cause());
+        StatusCategoryUtils.setStatusCategory(
+                incomingZuulRequest.getContext(),
+                ZuulStatusCategory.FAILURE_CLIENT_BAD_REQUEST,
+                "Invalid request provided: Decode failure");
+        RejectionUtils.rejectByClosingConnection(
+                ctx, ZuulStatusCategory.FAILURE_CLIENT_BAD_REQUEST, "decodefailure", nettyRequest, null);
+        return true;
+    }
+
+    private boolean isBadUri(ChannelHandlerContext ctx, HttpRequest nettyRequest, HttpRequestMessage incomingZuulRequest) {
+        if (!incomingZuulRequest.getContext().containsKey(CommonContextKeys.BAD_URI_REASON)) {
+            return false;
+        }
+
+        String clientIp = Objects.requireNonNullElse(getClientIp(ctx.channel()), "unknown");
+        String badUriReason = incomingZuulRequest.getContext().get(CommonContextKeys.BAD_URI_REASON);
+        LOG.warn(
+                "Invalid URI in request. reason = {}, clientRequest = {}, clientIp = {}, info = {}",
+                badUriReason,
+                nettyRequest,
+                clientIp,
+                ChannelUtils.channelInfoForLogging(ctx.channel()));
+        StatusCategoryUtils.setStatusCategory(
+                incomingZuulRequest.getContext(), ZuulStatusCategory.FAILURE_CLIENT_BAD_REQUEST, badUriReason);
+        RejectionUtils.sendRejectionResponse(
+                ctx,
+                ZuulStatusCategory.FAILURE_CLIENT_BAD_REQUEST,
+                "invaliduri",
+                nettyRequest,
+                null,
+                HttpResponseStatus.BAD_REQUEST,
+                badUriReason,
+                Map.of());
+        return true;
+    }
+
+    private void handleHttpContent(ChannelHandlerContext ctx, Object msg) {
+        if ((zuulRequest != null) && !zuulRequest.getContext().isCancelled()) {
+            ctx.fireChannelRead(msg);
+            return;
+        }
+
+        // We already sent response for this request, these are laggard request body chunks that are still arriving.
+        ReferenceCountUtil.release(msg);
+    }
+
+    private void handleHAProxyMessage(Object msg, HAProxyMessage haProxyMessage) {
+        // do nothing, should already be handled by ElbProxyProtocolHandler
+        LOG.debug("Received HAProxyMessage for Proxy Protocol IP: {}", haProxyMessage.sourceAddress());
+        ReferenceCountUtil.release(msg);
+    }
+
+    private void handleUnknownMessage(Object msg) {
+        LOG.debug("Received unrecognized message type. {}", msg.getClass().getName());
+        ReferenceCountUtil.release(msg);
     }
 
     @Override
